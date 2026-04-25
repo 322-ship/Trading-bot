@@ -29,7 +29,34 @@ ASSETS = {
     "LRCX": {"name": "Lam Research", "risk": "alto", "rsi_buy": 32, "rsi_sell": 72, "stop_loss": 0.08, "take_profit": 0.12},
     "SLB": {"name": "Schlumberger", "risk": "medio", "rsi_buy": 35, "rsi_sell": 70, "stop_loss": 0.06, "take_profit": 0.10},
     "VRT": {"name": "Vertiv", "risk": "alto", "rsi_buy": 30, "rsi_sell": 75, "stop_loss": 0.10, "take_profit": 0.15},
-    "NBIS": {"name": "Nebius", "risk": "alto", "rsi_buy": 30, "rsi_sell": 75, "stop_loss": 0.10, "take_profit": 0.15}
+    "NBIS": {"name": "Nebius", "risk": "alto", "rsi_buy": 30, "rsi_sell": 75, "stop_loss": 0.10, "take_profit": 0.15},
+    "NVDA": {"name": "Nvidia", "risk": "alto",
+         "rsi_buy": 32, "rsi_sell": 72, "stop_loss": 0.08,
+         "take_profit": 0.12},
+
+    "TSM": {"name": "TSMC", "risk": "alto",
+        "rsi_buy": 32, "rsi_sell": 72, "stop_loss": 0.08,
+        "take_profit": 0.12},
+
+    "AVGO": {"name": "Broadcom", "risk": "alto",
+         "rsi_buy": 32, "rsi_sell": 72, "stop_loss": 0.08,
+         "take_profit": 0.12},
+
+    "AMD": {"name": "AMD", "risk": "alto",
+        "rsi_buy": 32, "rsi_sell": 72, "stop_loss": 0.08,
+        "take_profit": 0.12},
+
+    "MU": {"name": "Micron", "risk": "alto",
+       "rsi_buy": 32, "rsi_sell": 72, "stop_loss": 0.08,
+       "take_profit": 0.12},
+
+    "JNJ": {"name": "Johnson & Johnson", "risk": "medio",
+        "rsi_buy": 30, "rsi_sell": 70, "stop_loss": 0.05,
+        "take_profit": 0.10},
+
+    "XOM": {"name": "Exxon Mobil", "risk": "medio",
+        "rsi_buy": 30, "rsi_sell": 70, "stop_loss": 0.05,
+        "take_profit": 0.10},
 }
 
 TRUSTED_SOURCES = [
