@@ -10,8 +10,8 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 # CONFIG
 # ======================
 
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TOKEN = os.getenv("8792659138:AAEjyeUVGwNSmD-kTN-f8TX9AxFE5InjJ3c")
+CHAT_ID = os.getenv("7595410408")
 
 USE_CLAUDE = False  # per ora OFF, lo riattiviamo quando paghi Claude
 
