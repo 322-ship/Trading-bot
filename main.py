@@ -4,7 +4,6 @@ import time
 import requests
 import yfinance as yf
 import schedule
-import anthropic
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 # ======================
@@ -14,12 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-USE_CLAUDE = True
-
-ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
-ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
-ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+USE_CLAUDE = False  # per ora OFF, lo riattiviamo quando paghi Claude
 
 WATCHLIST_FILE = "watchlist.json"
 POSITIONS_FILE = "positions.json"
@@ -44,21 +38,13 @@ ASSETS = {
 
     "JNJ": {"name": "Johnson & Johnson", "risk": "medio", "rsi_buy": 30, "rsi_sell": 70, "stop_loss": 0.05, "take_profit": 0.10},
     "XOM": {"name": "Exxon Mobil", "risk": "medio", "rsi_buy": 30, "rsi_sell": 70, "stop_loss": 0.05, "take_profit": 0.10},
-
-    "PLTR": {"name": "Palantir", "risk": "alto",
-         "rsi_buy": 32, "rsi_sell": 72,
-         "stop_loss": 0.08, "take_profit": 0.12},
-
-    "LMT": {"name": "Lockheed Martin", "risk": "medio",
-        "rsi_buy": 30, "rsi_sell": 70,
-        "stop_loss": 0.05, "take_profit": 0.10},
-
-    "PFE": {"name": "Pfizer", "risk": "medio",
-        "rsi_buy": 30, "rsi_sell": 70,
-        "stop_loss": 0.05, "take_profit": 0.10}
+    "PLTR": {"name": "Palantir", "risk": "alto", "rsi_buy": 32, "rsi_sell": 72, "stop_loss": 0.08, "take_profit": 0.12},
+    "LMT": {"name": "Lockheed Martin", "risk": "medio", "rsi_buy": 30, "rsi_sell": 70, "stop_loss": 0.05, "take_profit": 0.10},
+    "PFE": {"name": "Pfizer", "risk": "medio", "rsi_buy": 30, "rsi_sell": 70, "stop_loss": 0.05, "take_profit": 0.10}
 }
 
-UNDER_RADAR = ["QQQ", "SMH", "SOXX", "XLK", "XLE", "IWM", "BOTZ", "URA", "ARKQ", "XBI"]
+UNDER_RADAR = ["QQQ", "SMH", "SOXX", "XLK", "XLE", "IWM", "BOTZ", "URA", "ARKQ", "XBI", "PANW", "CRWD", "NET", "DDOG", "ENPH"]
+
 
 # ======================
 # TELEGRAM
@@ -97,6 +83,7 @@ def leggi_messaggi():
         print(f"Errore lettura Telegram: {e}")
         return {"ok": False, "result": []}
 
+
 # ======================
 # JSON
 # ======================
@@ -106,7 +93,6 @@ def leggi_json(file_path, default):
         if not os.path.exists(file_path):
             salva_json(file_path, default)
             return default
-
         with open(file_path, "r") as f:
             return json.load(f)
     except:
@@ -141,6 +127,7 @@ def carica_pending():
 def salva_pending(data):
     salva_json(PENDING_FILE, data)
 
+
 # ======================
 # ASSET
 # ======================
@@ -158,241 +145,165 @@ def config_default(symbol):
 
 def tutti_gli_asset():
     assets = dict(ASSETS)
-
     for symbol in carica_watchlist():
         symbol = symbol.upper()
         if symbol not in assets:
             assets[symbol] = config_default(symbol)
-
     return assets
 
-# ======================
-# ALPACA PAPER
-# ======================
-
-def alpaca_headers():
-    return {
-        "APCA-API-KEY-ID": ALPACA_API_KEY,
-        "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
-        "Content-Type": "application/json"
-    }
-
-
-def alpaca_configurato():
-    return bool(ALPACA_API_KEY and ALPACA_SECRET_KEY)
-
-
-def alpaca_submit_order(symbol, side, amount):
-    if not alpaca_configurato():
-        return False, "Alpaca non configurato"
-
-    try:
-        payload = {
-            "symbol": symbol,
-            "side": side,
-            "type": "market",
-            "time_in_force": "day",
-            "notional": str(round(float(amount), 2))
-        }
-
-        r = requests.post(
-            f"{ALPACA_BASE_URL}/v2/orders",
-            headers=alpaca_headers(),
-            json=payload,
-            timeout=15
-        )
-
-        if r.status_code in [200, 201]:
-            return True, r.json()
-
-        return False, r.text
-
-    except Exception as e:
-        return False, str(e)
-
-
-def alpaca_close_position(symbol):
-    if not alpaca_configurato():
-        return False, "Alpaca non configurato"
-
-    try:
-        r = requests.delete(
-            f"{ALPACA_BASE_URL}/v2/positions/{symbol}",
-            headers=alpaca_headers(),
-            timeout=15
-        )
-
-        if r.status_code in [200, 204]:
-            return True, "Posizione chiusa"
-
-        return False, r.text
-
-    except Exception as e:
-        return False, str(e)
 
 # ======================
-# ANALISI
+# ALGORITMO MIGLIORATO
 # ======================
 
-def estrai_news(ticker):
-    try:
-        news_items = ticker.news or []
-    except:
-        return "News non disponibili."
-
-    righe = []
-
-    for item in news_items[:3]:
-        try:
-            content = item.get("content") or {}
-
-            title = content.get("title") or item.get("title") or "Titolo non disponibile"
-            provider = content.get("provider") or {}
-            publisher = provider.get("displayName") or item.get("publisher") or "Fonte sconosciuta"
-
-            righe.append(f"- {title}\nFonte: {publisher}")
-        except:
-            continue
-
-    return "\n\n".join(righe) if righe else "Nessuna news rilevante."
+def score_risk_adjustment(risk):
+    if risk == "basso":
+        return 5
+    if risk == "medio":
+        return 0
+    if risk == "alto":
+        return -5
+    return 0
 
 
-def calcola_confidence(ema20, ema50, rsi, change_pct, config):
-    confidence = 50
-
-    if ema20 > ema50:
-        confidence += 15
-    else:
-        confidence -= 15
-
-    if change_pct > 0:
-        confidence += 10
-    else:
-        confidence -= 10
-
-    if rsi < config["rsi_buy"]:
-        confidence += 15
-    elif rsi > config["rsi_sell"]:
-        confidence -= 15
-
-    if config["risk"] == "basso":
-        confidence += 5
-    elif config["risk"] == "alto":
-        confidence -= 5
-
-    return max(0, min(100, int(confidence)))
-
-
-def decisione_da_confidence(confidence):
-    if confidence >= 65:
-        return "BUY"
-    if confidence <= 35:
-        return "SELL"
-    return "HOLD"
-
-
-def analisi_claude(symbol, result):
-    if not USE_CLAUDE or not ANTHROPIC_API_KEY:
-        return ""
-
-    try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-        prompt = f"""
-Analizza questo asset in modo prudente.
-
-Asset: {symbol}
-Prezzo: {result["price"]}
-Variazione: {result["change_pct"]}%
-EMA20: {result["ema20"]}
-EMA50: {result["ema50"]}
-RSI: {result["rsi"]}
-Rischio: {result["risk"]}
-Confidence tecnica: {result["confidence"]}%
-Decisione tecnica: {result["decision"]}
-
-News:
-{result["news"]}
-
-Rispondi breve in italiano:
-1. confermi o indebolisci il segnale?
-2. rischio principale
-3. opportunità
-4. BUY, HOLD o SELL
-5. capitale prudente: basso, medio o alto
-
-Non promettere guadagni.
-"""
-
-    response = client.messages.create(
-        model="claude-3-haiku-20240307",
-        max_tokens=400,
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    text_parts = []
-
-    for block in response.content:
-        text = getattr(block, "text", None)
-        if text:
-            text_parts.append(str(text))
-
-    return "\n".join(text_parts).strip()
-
-    except Exception as e:
-        return f"Claude non disponibile: {e}"
-
-
-def analizza_asset(symbol, config):
-    ticker = yf.Ticker(symbol)
-    data = ticker.history(period="5d", interval="15m")
-
-    if data.empty or len(data) < 50:
-        return {"symbol": symbol, "error": "Dati insufficienti"}
-
-    close = data["Close"]
-
-    price = float(close.iloc[-1])
-    previous_price = float(close.iloc[-2])
-    change_pct = ((price - previous_price) / previous_price) * 100
-
-    ema20 = float(close.ewm(span=20).mean().iloc[-1])
-    ema50 = float(close.ewm(span=50).mean().iloc[-1])
-
+def calcola_rsi(close):
     delta = close.diff()
     gain = delta.where(delta > 0, 0).rolling(14).mean()
     loss = -delta.where(delta < 0, 0).rolling(14).mean()
     rs = gain / loss
-    rsi = float(100 - (100 / (1 + rs.iloc[-1])))
+    return float(100 - (100 / (1 + rs.iloc[-1])))
 
-    volume = int(data["Volume"].iloc[-1])
-    confidence = calcola_confidence(ema20, ema50, rsi, change_pct, config)
+
+def calcola_confidence(price, ema20, ema50, ema200, rsi, change_15m, change_5d, volume, avg_volume, config):
+    confidence = 50
+    reasons = []
+
+    # Trend breve
+    if ema20 > ema50:
+        confidence += 12
+        reasons.append("trend breve positivo")
+    else:
+        confidence -= 12
+        reasons.append("trend breve debole")
+
+    # Trend lungo
+    if price > ema200:
+        confidence += 10
+        reasons.append("prezzo sopra EMA200")
+    else:
+        confidence -= 10
+        reasons.append("prezzo sotto EMA200")
+
+    # Momentum
+    if change_15m > 0:
+        confidence += 6
+        reasons.append("momentum 15m positivo")
+    else:
+        confidence -= 6
+        reasons.append("momentum 15m negativo")
+
+    if change_5d > 1:
+        confidence += 8
+        reasons.append("momentum 5 giorni forte")
+    elif change_5d < -1:
+        confidence -= 8
+        reasons.append("momentum 5 giorni debole")
+
+    # RSI
+    if 45 <= rsi <= 62:
+        confidence += 8
+        reasons.append("RSI sano")
+    elif rsi < config["rsi_buy"]:
+        confidence += 10
+        reasons.append("RSI basso: possibile rimbalzo")
+    elif rsi > config["rsi_sell"]:
+        confidence -= 12
+        reasons.append("RSI alto: rischio ipercomprato")
+
+    # Volume
+    if avg_volume > 0:
+        volume_ratio = volume / avg_volume
+        if volume_ratio > 1.4 and change_15m > 0:
+            confidence += 10
+            reasons.append("volume forte con prezzo in salita")
+        elif volume_ratio > 1.4 and change_15m < 0:
+            confidence -= 10
+            reasons.append("volume forte con prezzo in discesa")
+        elif volume_ratio < 0.6:
+            confidence -= 4
+            reasons.append("volume debole")
+
+    # Rischio asset
+    confidence += score_risk_adjustment(config["risk"])
+
+    confidence = max(0, min(100, int(confidence)))
+    return confidence, reasons
+
+
+def decisione_da_confidence(confidence):
+    if confidence >= 72:
+        return "BUY"
+    if confidence <= 30:
+        return "SELL"
+    return "HOLD"
+
+
+def analizza_asset(symbol, config):
+    ticker = yf.Ticker(symbol)
+    data = ticker.history(period="6mo", interval="1d")
+
+    if data.empty or len(data) < 60:
+        return {"symbol": symbol, "error": "Dati insufficienti"}
+
+    close = data["Close"]
+    volume_series = data["Volume"]
+
+    price = float(close.iloc[-1])
+    previous_price = float(close.iloc[-2])
+    old_price = float(close.iloc[-6]) if len(close) >= 6 else previous_price
+
+    change_15m = ((price - previous_price) / previous_price) * 100
+    change_5d = ((price - old_price) / old_price) * 100
+
+    ema20 = float(close.ewm(span=20).mean().iloc[-1])
+    ema50 = float(close.ewm(span=50).mean().iloc[-1])
+    ema200 = float(close.ewm(span=200).mean().iloc[-1])
+
+    rsi = calcola_rsi(close)
+
+    volume = int(volume_series.iloc[-1])
+    avg_volume = float(volume_series.rolling(20).mean().iloc[-1])
+
+    confidence, reasons = calcola_confidence(
+        price, ema20, ema50, ema200, rsi,
+        change_15m, change_5d,
+        volume, avg_volume, config
+    )
+
     decision = decisione_da_confidence(confidence)
-    news = estrai_news(ticker)
 
-    result = {
+    return {
         "symbol": symbol,
         "name": config["name"],
         "risk": config["risk"],
         "price": round(price, 2),
-        "change_pct": round(change_pct, 2),
+        "change_1d": round(change_15m, 2),
+        "change_5d": round(change_5d, 2),
         "ema20": round(ema20, 2),
         "ema50": round(ema50, 2),
+        "ema200": round(ema200, 2),
         "rsi": round(rsi, 2),
         "volume": volume,
-        "stop_loss": config["stop_loss"],
-        "take_profit": config["take_profit"],
+        "avg_volume": int(avg_volume),
         "confidence": confidence,
         "decision": decision,
-        "news": news,
-        "ai": ""
+        "reasons": reasons,
+        "stop_loss": config["stop_loss"],
+        "take_profit": config["take_profit"]
     }
 
-    result["ai"] = analisi_claude(symbol, result)
-    return result
 
-
-def analizza_con_timeout(symbol, config, timeout_sec=30):
+def analizza_con_timeout(symbol, config, timeout_sec=20):
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(analizza_asset, symbol, config)
         try:
@@ -401,6 +312,7 @@ def analizza_con_timeout(symbol, config, timeout_sec=30):
             return {"symbol": symbol, "error": "Timeout dati mercato"}
         except Exception as e:
             return {"symbol": symbol, "error": str(e)}
+
 
 # ======================
 # REPORT
@@ -429,15 +341,52 @@ def aggiorna_pending(symbol, result):
     salva_pending(pending)
 
 
-def crea_report(tipo="manuale"):
-    if tipo == "mattina":
-        titolo = "🌅 REPORT MATTINA"
-    elif tipo == "sera":
-        titolo = "🌙 REPORT SERALE"
-    else:
-        titolo = "📌 REPORT MANUALE"
+def messaggio_asset(result):
+    reasons = "\n".join([f"• {r}" for r in result["reasons"][:4]])
 
-    manda_telegram(f"{titolo}\n⏳ Sto preparando il report asset per asset...")
+    msg = f"""
+📊 {result["symbol"]} - {result["name"]}
+
+💰 Prezzo: ${result["price"]}
+📉 1D: {result["change_1d"]}%
+📆 5D: {result["change_5d"]}%
+
+📈 EMA20: {result["ema20"]}
+📈 EMA50: {result["ema50"]}
+📈 EMA200: {result["ema200"]}
+📊 RSI: {result["rsi"]}
+
+📦 Volume: {result["volume"]}
+📦 Volume medio: {result["avg_volume"]}
+
+⚠️ Rischio: {result["risk"]}
+🎯 Confidence: {result["confidence"]}%
+🤖 Decisione: {result["decision"]}
+
+🧠 Motivi:
+{reasons}
+
+🛑 Stop loss: {result["stop_loss"] * 100:.1f}%
+🎯 Take profit: {result["take_profit"] * 100:.1f}%
+"""
+
+    if result["decision"] == "BUY":
+        msg += f"""
+
+✅ Approva simulazione:
+ /ok {result["symbol"]} IMPORTO
+
+❌ Rifiuta:
+ /no {result["symbol"]}
+"""
+
+    return msg
+
+
+def crea_report(tipo="manuale"):
+    manda_telegram("📌 REPORT\n⏳ Analizzo gli asset e preparo ranking TOP...")
+
+    risultati = []
 
     for symbol, config in tutti_gli_asset().items():
         result = analizza_con_timeout(symbol, config)
@@ -447,95 +396,68 @@ def crea_report(tipo="manuale"):
             continue
 
         aggiorna_pending(symbol, result)
+        risultati.append(result)
 
-        msg = f"""
-📊 {symbol} - {result["name"]}
+    risultati.sort(key=lambda x: x["confidence"], reverse=True)
 
-💰 Prezzo: ${result["price"]}
-📉 Variazione: {result["change_pct"]}%
+    top = risultati[:5]
 
-📈 EMA20: {result["ema20"]}
-📈 EMA50: {result["ema50"]}
-📊 RSI: {result["rsi"]}
-📦 Volume: {result["volume"]}
+    msg = "🏆 TOP 5 OPPORTUNITÀ\n"
+    for i, r in enumerate(top, 1):
+        msg += f'\n{i}. {r["symbol"]} | {r["decision"]} | Confidence {r["confidence"]}% | RSI {r["rsi"]} | 5D {r["change_5d"]}%'
 
-⚠️ Rischio: {result["risk"]}
-🎯 Confidence: {result["confidence"]}%
+    manda_telegram(msg)
 
-🛑 Stop loss: {result["stop_loss"] * 100:.1f}%
-🎯 Take profit: {result["take_profit"] * 100:.1f}%
-
-🤖 Decisione: {result["decision"]}
-"""
-
-        if result["decision"] != "HOLD":
-            msg += f"""
-
-✅ Approva paper trade:
- /ok {symbol} IMPORTO
-
-❌ Rifiuta:
- /no {symbol}
-"""
-
-        msg += f"""
-
-📰 News:
-{result["news"]}
-"""
-
-        if result["ai"]:
-            msg += f"""
-
-🧠 Claude:
-{result["ai"]}
-"""
-
-        manda_telegram(msg)
+    for r in top:
+        manda_telegram(messaggio_asset(r))
         time.sleep(1)
 
     manda_telegram("✅ Report completato.")
 
-# ======================
-# IDEE SOTTO RADAR
-# ======================
 
 def suggerisci_under_radar():
     manda_telegram("🔎 Cerco opportunità sotto radar...")
 
-    found = 0
+    risultati = []
 
     for symbol in UNDER_RADAR:
         result = analizza_con_timeout(symbol, config_default(symbol))
+        if "error" not in result:
+            risultati.append(result)
 
-        if "error" in result:
-            continue
+    risultati.sort(key=lambda x: x["confidence"], reverse=True)
 
-        if result["confidence"] >= 65:
-            found += 1
-            manda_telegram(f"""
-💡 Opportunità possibile: {symbol}
+    top = [r for r in risultati if r["confidence"] >= 65][:5]
 
-Prezzo: ${result["price"]}
-Confidence: {result["confidence"]}%
-Decisione: {result["decision"]}
-RSI: {result["rsi"]}
-EMA20/EMA50: {result["ema20"]}/{result["ema50"]}
+    if not top:
+        manda_telegram("Nessuna opportunità sotto radar interessante al momento.")
+        return
+
+    for r in top:
+        manda_telegram(f"""
+💡 SOTTO RADAR: {r["symbol"]}
+
+Prezzo: ${r["price"]}
+Confidence: {r["confidence"]}%
+Decisione: {r["decision"]}
+RSI: {r["rsi"]}
+5D: {r["change_5d"]}%
+
+Motivi:
+{chr(10).join(["• " + x for x in r["reasons"][:4]])}
 
 Per monitorarlo:
- /add {symbol}
+ /add {r["symbol"]}
 """)
 
-    if found == 0:
-        manda_telegram("Nessuna opportunità interessante sotto radar al momento.")
 
 # ======================
-# POSIZIONI
+# SIMULAZIONE PAPER INTERNA
 # ======================
 
 def prezzo_attuale(symbol):
     try:
-        data = yf.Ticker(symbol).history(period="1d", interval="5m")
+        data = yf.Ticker(symbol).history(period="5d", interval="1d")
         if data.empty:
             return None
         return float(data["Close"].iloc[-1])
@@ -558,19 +480,18 @@ def controlla_posizioni():
         take = p["take_profit"] * 100
 
         if pnl_pct <= -stop:
-            manda_telegram(f"🛑 STOP LOSS PAPER su {symbol}: P/L {pnl_pct:.2f}%")
-            alpaca_close_position(symbol)
+            manda_telegram(f"🛑 STOP LOSS SIMULATO su {symbol}: P/L {pnl_pct:.2f}%")
             del posizioni[symbol]
             salva_posizioni(posizioni)
 
         elif pnl_pct >= take:
-            manda_telegram(f"🎯 TAKE PROFIT PAPER su {symbol}: P/L {pnl_pct:.2f}%")
-            alpaca_close_position(symbol)
+            manda_telegram(f"🎯 TAKE PROFIT SIMULATO su {symbol}: P/L {pnl_pct:.2f}%")
             del posizioni[symbol]
             salva_posizioni(posizioni)
 
+
 # ======================
-# COMANDI TELEGRAM
+# COMANDI
 # ======================
 
 def gestisci_comandi():
@@ -607,7 +528,6 @@ Comandi disponibili:
 
 /positions
 /close TICKER
-
 /help
 """)
 
@@ -623,7 +543,7 @@ Comandi disponibili:
         elif text.startswith("/add"):
             parts = text.split()
             if len(parts) < 2:
-                manda_telegram("Uso corretto: /add QQQ")
+                manda_telegram("Uso: /add QQQ")
                 continue
 
             symbol = parts[1].upper()
@@ -639,7 +559,7 @@ Comandi disponibili:
         elif text.startswith("/remove"):
             parts = text.split()
             if len(parts) < 2:
-                manda_telegram("Uso corretto: /remove QQQ")
+                manda_telegram("Uso: /remove QQQ")
                 continue
 
             symbol = parts[1].upper()
@@ -654,7 +574,6 @@ Comandi disponibili:
 
         elif text == "/pending":
             pending = carica_pending()
-
             if not pending:
                 manda_telegram("Nessun trade in attesa")
             else:
@@ -666,7 +585,7 @@ Comandi disponibili:
         elif text.startswith("/ok"):
             parts = text.split()
             if len(parts) < 3:
-                manda_telegram("Uso corretto: /ok NVDA 100")
+                manda_telegram("Uso: /ok NVDA 100")
                 continue
 
             symbol = parts[1].upper()
@@ -680,16 +599,6 @@ Comandi disponibili:
                 continue
 
             trade = pending[symbol]
-
-            if trade["decision"] == "BUY":
-                ok, response = alpaca_submit_order(symbol, "buy", amount)
-            else:
-                ok, response = False, "Per ora il bot esegue solo BUY paper. SELL chiude posizioni."
-
-            if not ok:
-                manda_telegram(f"❌ Errore Alpaca paper su {symbol}:\n{response}")
-                continue
-
             price = prezzo_attuale(symbol) or trade["price"]
 
             posizioni[symbol] = {
@@ -698,6 +607,7 @@ Comandi disponibili:
                 "entry_price": price,
                 "stop_loss": trade["stop_loss"],
                 "take_profit": trade["take_profit"],
+                "confidence": trade["confidence"],
                 "opened_at": time.ctime()
             }
 
@@ -707,18 +617,18 @@ Comandi disponibili:
             salva_pending(pending)
 
             manda_telegram(f"""
-✅ PAPER TRADE ESEGUITO
+✅ TRADE SIMULATO APERTO
 
 Asset: {symbol}
 Capitale: ${amount}
-Entry stimata: ${price:.2f}
+Entry: ${price:.2f}
 Confidence: {trade["confidence"]}%
 """)
 
         elif text.startswith("/no"):
             parts = text.split()
             if len(parts) < 2:
-                manda_telegram("Uso corretto: /no NVDA")
+                manda_telegram("Uso: /no NVDA")
                 continue
 
             symbol = parts[1].upper()
@@ -735,37 +645,34 @@ Confidence: {trade["confidence"]}%
             posizioni = carica_posizioni()
 
             if not posizioni:
-                manda_telegram("Nessuna posizione paper aperta")
+                manda_telegram("Nessuna posizione simulata aperta")
             else:
-                msg = "📌 Posizioni paper aperte:\n"
-
+                msg = "📌 Posizioni simulate:\n"
                 for symbol, p in posizioni.items():
                     current = prezzo_attuale(symbol)
-
                     if current:
                         pnl = ((current - p["entry_price"]) / p["entry_price"]) * 100
                         msg += f'\n{symbol}: ${p["amount"]} | Entry ${p["entry_price"]:.2f} | Ora ${current:.2f} | P/L {pnl:.2f}%'
                     else:
                         msg += f'\n{symbol}: ${p["amount"]}'
-
                 manda_telegram(msg)
 
         elif text.startswith("/close"):
             parts = text.split()
             if len(parts) < 2:
-                manda_telegram("Uso corretto: /close NVDA")
+                manda_telegram("Uso: /close NVDA")
                 continue
 
             symbol = parts[1].upper()
             posizioni = carica_posizioni()
 
-            ok, response = alpaca_close_position(symbol)
-
             if symbol in posizioni:
                 del posizioni[symbol]
                 salva_posizioni(posizioni)
+                manda_telegram(f"🔒 Posizione simulata chiusa: {symbol}")
+            else:
+                manda_telegram(f"Nessuna posizione aperta su {symbol}")
 
-            manda_telegram(f"🔒 Chiusura {symbol}: {response}")
 
 # ======================
 # SCHEDULE
@@ -773,10 +680,10 @@ Confidence: {trade["confidence"]}%
 
 schedule.every().day.at("07:30").do(lambda: crea_report("mattina"))
 schedule.every().day.at("20:30").do(lambda: crea_report("sera"))
-schedule.every(3).days.do(lambda: manda_telegram("📆 Controllo 3 giorni: mandami /positions e screenshot Alpaca."))
+schedule.every(3).days.do(lambda: manda_telegram("📆 Controllo 3 giorni: mandami /positions e miglioriamo il bot."))
 schedule.every(5).minutes.do(controlla_posizioni)
 
-print("Bot avviato... routine attiva.")
+print("Bot avviato... algoritmo migliorato attivo.")
 
 while True:
     gestisci_comandi()
